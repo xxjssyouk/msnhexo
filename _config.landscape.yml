@@ -1,0 +1,6 @@
+# Deployment
+## Docs: https://hexo.io/docs/one-command-deployment
+deploy:
+     type: git
+     repo: https://github.com/xxjssyou/msnhexo.git  # 或 git@github.com:你的用户名/你的仓库名.git
+     branch: gh-pages  # 或 main/docs（取决于 GitHub Pages 设置）
