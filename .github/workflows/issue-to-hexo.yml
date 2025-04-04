@@ -88,17 +88,3 @@ jobs:
           hexo clean
           hexo generate
           hexo deploy
-
-  # 7. 通知（可选）
-  notify:
-    needs: convert-issue
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Show Result
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            echo "✅ Successfully created post: ${{ steps.generate-post.outputs.post_path }}"
-          else
-            echo "❌ Failed to process issue"
-          fi
