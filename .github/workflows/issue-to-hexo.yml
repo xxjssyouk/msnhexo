@@ -1,0 +1,104 @@
+name: Convert Labeled Issues to Hexo Posts
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  convert-issue:
+    # 只处理带 labels 的 issue
+    if: github.event.issue.labels && github.event.issue.labels.length > 0
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 设置 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # 3. 安装 Hexo
+      - name: Install Hexo
+        run: |
+          npm install -g hexo-cli
+          npm install
+
+      # 4. 创建 Hexo 文章
+      - name: Generate Hexo Post
+        id: generate-post
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels) }}
+        run: |
+          # 清理文件名（替换特殊字符为-）
+          CLEAN_TITLE=$(echo "$ISSUE_TITLE" | \
+            tr '[:upper:]' '[:lower:]' | \
+            sed -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')
+
+          # 当前日期
+          POST_DATE=$(date +"%Y-%m-%d")
+
+          # 文件路径
+          POST_DIR="source/_posts"
+          POST_PATH="$POST_DIR/$POST_DATE-issue-$ISSUE_NUMBER-$CLEAN_TITLE.md"
+
+          # 创建目录（如果不存在）
+          mkdir -p $POST_DIR
+
+          # 转换 labels 为 tags 数组
+          TAGS=$(echo "$ISSUE_LABELS" | jq -r '.[].name' | jq -R -s -c 'split("\n")[:-1]')
+
+          # 生成 Hexo 文章
+          cat << EOF > "$POST_PATH"
+          ---
+          title: "$ISSUE_TITLE"
+          date: $POST_DATE
+          tags: $TAGS
+          ---
+
+          $ISSUE_BODY
+          EOF
+
+          # 输出生成信息
+          echo "Generated post at: $POST_PATH"
+          echo "post_path=$POST_PATH" >> $GITHUB_OUTPUT
+
+      # 5. 提交变更
+      - name: Commit Changes
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "Auto: Add post from issue #${{ github.event.issue.number }}"
+          git push
+
+      # 6. 部署 Hexo
+      - name: Deploy Hexo
+        run: |
+          npm install hexo-deployer-git --save
+          hexo clean
+          hexo generate
+          hexo deploy
+
+  # 7. 通知（可选）
+  notify:
+    needs: convert-issue
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Show Result
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Successfully created post: ${{ steps.generate-post.outputs.post_path }}"
+          else
+            echo "❌ Failed to process issue"
+          fi
