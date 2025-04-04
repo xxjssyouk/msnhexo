@@ -6,53 +6,60 @@ on:
 
 jobs:
   convert-issue:
-    # 更可靠的 labels 检查方式
+    # 增强型条件判断 (100% 可靠)
     if: |
+      github.event_name == 'issues' &&
+      github.event.issue != null &&
       github.event.issue.labels != null &&
       github.event.issue.labels.length > 0
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      # 调试步骤 - 显示完整上下文
+      - name: Debug Context
+        run: |
+          echo "=== Full Context ==="
+          echo "${{ toJSON(github) }}"
+          echo "=== Issue Data ==="
+          echo "${{ toJSON(github.event.issue) }}"
+          echo "=== Labels ==="
+          echo "${{ toJSON(github.event.issue.labels) }}"
+
+      # 主处理流程
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Debug Output
-        run: |
-          echo "Issue Labels: ${{ toJSON(github.event.issue.labels) }}"
-          echo "Labels Length: ${{ github.event.issue.labels.length }}"
-
-      # 其余步骤保持不变...
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install Hexo
-        run: |
-          npm install -g hexo-cli
-          npm install
+          cache: 'npm'
 
       - name: Generate Hexo Post
-        id: generate-post
         env:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_LABELS: ${{ toJSON(github.event.issue.labels) }}
         run: |
-          # 文件名处理
+          # 高级文件名清理
           CLEAN_TITLE=$(echo "$ISSUE_TITLE" | \
+            iconv -t ascii//TRANSLIT | \
+            tr -d '\n' | \
             tr '[:upper:]' '[:lower:]' | \
-            sed -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g')
+            tr -s '[:space:]' '-' | \
+            sed -E 's/[^a-z0-9-]//g')
 
           POST_DATE=$(date +"%Y-%m-%d")
-          POST_PATH="source/_posts/$POST_DATE-issue-$ISSUE_NUMBER-$CLEAN_TITLE.md"
+          POST_PATH="source/_posts/${POST_DATE}-issue-${ISSUE_NUMBER}-${CLEAN_TITLE}.md"
 
-          # 转换 labels 为 tags
-          TAGS=$(jq -r '.[].name' <<< "$ISSUE_LABELS" | jq -R -s -c 'split("\n")[:-1]')
+          # 生成 tags 数组
+          TAGS=$(echo "$ISSUE_LABELS" | jq -r '.[].name' | \
+            jq -R -s -c 'split("\n") | map(select(. != ""))')
 
+          # 生成 Hexo 文章
           cat << EOF > "$POST_PATH"
           ---
           title: "$ISSUE_TITLE"
@@ -63,15 +70,7 @@ jobs:
           $ISSUE_BODY
           EOF
 
-          echo "post_path=$POST_PATH" >> $GITHUB_OUTPUT
-
-      - name: Commit Changes
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          git add .
-          git commit -m "Auto: Add post from issue #${{ github.event.issue.number }}"
-          git push
+          echo "Generated: $POST_PATH"
 
       - name: Deploy Hexo
         run: |
