@@ -6,31 +6,34 @@ on:
 
 jobs:
   convert-issue:
-    # 只处理带 labels 的 issue
-    if: github.event.issue.labels && github.event.issue.labels.length > 0
+    # 更可靠的 labels 检查方式
+    if: |
+      github.event.issue.labels != null &&
+      github.event.issue.labels.length > 0
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 检出代码
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. 设置 Node.js 环境
+      - name: Debug Output
+        run: |
+          echo "Issue Labels: ${{ toJSON(github.event.issue.labels) }}"
+          echo "Labels Length: ${{ github.event.issue.labels.length }}"
+
+      # 其余步骤保持不变...
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
-      # 3. 安装 Hexo
       - name: Install Hexo
         run: |
           npm install -g hexo-cli
           npm install
 
-      # 4. 创建 Hexo 文章
       - name: Generate Hexo Post
         id: generate-post
         env:
@@ -39,25 +42,17 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_LABELS: ${{ toJSON(github.event.issue.labels) }}
         run: |
-          # 清理文件名（替换特殊字符为-）
+          # 文件名处理
           CLEAN_TITLE=$(echo "$ISSUE_TITLE" | \
             tr '[:upper:]' '[:lower:]' | \
-            sed -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//')
+            sed -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g')
 
-          # 当前日期
           POST_DATE=$(date +"%Y-%m-%d")
+          POST_PATH="source/_posts/$POST_DATE-issue-$ISSUE_NUMBER-$CLEAN_TITLE.md"
 
-          # 文件路径
-          POST_DIR="source/_posts"
-          POST_PATH="$POST_DIR/$POST_DATE-issue-$ISSUE_NUMBER-$CLEAN_TITLE.md"
+          # 转换 labels 为 tags
+          TAGS=$(jq -r '.[].name' <<< "$ISSUE_LABELS" | jq -R -s -c 'split("\n")[:-1]')
 
-          # 创建目录（如果不存在）
-          mkdir -p $POST_DIR
-
-          # 转换 labels 为 tags 数组
-          TAGS=$(echo "$ISSUE_LABELS" | jq -r '.[].name' | jq -R -s -c 'split("\n")[:-1]')
-
-          # 生成 Hexo 文章
           cat << EOF > "$POST_PATH"
           ---
           title: "$ISSUE_TITLE"
@@ -68,11 +63,8 @@ jobs:
           $ISSUE_BODY
           EOF
 
-          # 输出生成信息
-          echo "Generated post at: $POST_PATH"
           echo "post_path=$POST_PATH" >> $GITHUB_OUTPUT
 
-      # 5. 提交变更
       - name: Commit Changes
         run: |
           git config --global user.name "GitHub Actions"
@@ -81,7 +73,6 @@ jobs:
           git commit -m "Auto: Add post from issue #${{ github.event.issue.number }}"
           git push
 
-      # 6. 部署 Hexo
       - name: Deploy Hexo
         run: |
           npm install hexo-deployer-git --save
